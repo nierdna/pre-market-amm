@@ -11,13 +11,15 @@ export class WPreMarketAMM {
    * @param preToken Pre-token
    * @param minPrice Minimum price (Pa)
    * @param maxPrice Maximum price (Pb)
+   * @param initialPrice Initial price (optional, defaults to minPrice)
    * @returns Pool ID
    */
   createPool(
     baseToken: Token,
     preToken: Token,
     minPrice: number,
-    maxPrice: number
+    maxPrice: number,
+    initialPrice?: number
   ): string {
     const poolId = `${baseToken.symbol}-${preToken.symbol}`;
 
@@ -25,12 +27,20 @@ export class WPreMarketAMM {
       throw new Error(`Pool ${poolId} already exists`);
     }
 
-    const pool = new LiquidityPool(baseToken, preToken, minPrice, maxPrice);
+    const pool = new LiquidityPool(
+      baseToken,
+      preToken,
+      minPrice,
+      maxPrice,
+      initialPrice
+    );
     this._liquidityPools.set(poolId, pool);
 
-    console.log(
-      `Created new pool: ${poolId} with price range ${minPrice} - ${maxPrice}`
-    );
+    const priceInfo = initialPrice
+      ? `with price range ${minPrice} - ${maxPrice} and initial price ${initialPrice}`
+      : `with price range ${minPrice} - ${maxPrice}`;
+
+    console.log(`Created new pool: ${poolId} ${priceInfo}`);
 
     return poolId;
   }

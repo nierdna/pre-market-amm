@@ -21,8 +21,8 @@ function runSimulation() {
   // Create AMM
   const amm = new WPreMarketAMM();
 
-  // Create pool
-  const poolId = amm.createPool(baseToken, preToken, 1.0, 5.0); // Price range: $1.0 - $5.0
+  // Create pool with initial price of 2.0
+  const poolId = amm.createPool(baseToken, preToken, 1.0, 5.0, 2.0); // Price range: $1.0 - $5.0, Initial price: $2.0
 
   console.log("\n" + "-".repeat(80));
   console.log("Initial Token Balances:");
@@ -31,6 +31,17 @@ function runSimulation() {
   console.log(`LP2: ${baseToken.balanceOf("LP2")} ${baseToken.symbol}`);
   console.log(`Trader1: ${baseToken.balanceOf("Trader1")} ${baseToken.symbol}`);
   console.log(`Trader2: ${baseToken.balanceOf("Trader2")} ${baseToken.symbol}`);
+
+  // Display initial pool state
+  const pool = amm.getPool(poolId);
+  console.log("\n" + "-".repeat(80));
+  console.log("Initial Pool State:");
+  console.log("-".repeat(80));
+  console.log(`Base Token Reserve: ${pool.baseReserve} ${baseToken.symbol}`);
+  console.log(
+    `Pre-Token Reserve: ${pool.preTokenReserve.toFixed(6)} ${preToken.symbol}`
+  );
+  console.log(`Current Price: $${pool.getCurrentPrice().toFixed(6)}`); // Should be 2.0 (initial price)
 
   // LP1 adds liquidity
   console.log("\n" + "-".repeat(80));
@@ -44,8 +55,7 @@ function runSimulation() {
   console.log("-".repeat(80));
   const lp2PositionId = amm.addLiquidity(poolId, "LP2", 10000, 1.5, 4.0);
 
-  // Display pool state
-  const pool = amm.getPool(poolId);
+  // Display pool state after liquidity addition
   console.log("\n" + "-".repeat(80));
   console.log("Pool State After Liquidity Addition:");
   console.log("-".repeat(80));
@@ -53,7 +63,7 @@ function runSimulation() {
   console.log(
     `Pre-Token Reserve: ${pool.preTokenReserve.toFixed(6)} ${preToken.symbol}`
   );
-  console.log(`Current Price: $${pool.getCurrentPrice().toFixed(6)}`);
+  console.log(`Current Price: $${pool.getCurrentPrice().toFixed(6)}`); // Should still be 2.0 (adding liquidity doesn't change price)
 
   // Trader1 buys pre-tokens
   console.log("\n" + "-".repeat(80));
@@ -77,7 +87,7 @@ function runSimulation() {
   console.log(
     `Pool Pre-Token: ${pool.preTokenReserve.toFixed(6)} ${preToken.symbol}`
   );
-  console.log(`Current Price: $${pool.getCurrentPrice().toFixed(6)}`);
+  console.log(`Current Price: $${pool.getCurrentPrice().toFixed(6)}`); // Price should change after swap
 
   // Trader2 buys pre-tokens
   console.log("\n" + "-".repeat(80));
@@ -101,7 +111,7 @@ function runSimulation() {
   console.log(
     `Pool Pre-Token: ${pool.preTokenReserve.toFixed(6)} ${preToken.symbol}`
   );
-  console.log(`Current Price: $${pool.getCurrentPrice().toFixed(6)}`);
+  console.log(`Current Price: $${pool.getCurrentPrice().toFixed(6)}`); // Price should change after swap
 
   // Trader1 sells some pre-tokens
   console.log("\n" + "-".repeat(80));
@@ -130,7 +140,7 @@ function runSimulation() {
   console.log(
     `Pool Pre-Token: ${pool.preTokenReserve.toFixed(6)} ${preToken.symbol}`
   );
-  console.log(`Current Price: $${pool.getCurrentPrice().toFixed(6)}`);
+  console.log(`Current Price: $${pool.getCurrentPrice().toFixed(6)}`); // Price should change after swap
 
   // Enter settlement phase (after TGE)
   console.log("\n" + "-".repeat(80));

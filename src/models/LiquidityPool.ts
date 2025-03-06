@@ -25,18 +25,31 @@ export class LiquidityPool {
   private _isSettlementPhase: boolean = false;
   private _realToken: Token | null = null;
   private _nextPositionId: number = 1;
+  private _currentSqrtPrice: number; // Lưu trữ căn bậc hai của giá hiện tại
+  private _initialPriceSet: boolean = false; // Đánh dấu đã thiết lập giá khởi đầu chưa
 
   constructor(
     baseToken: Token,
     preToken: Token,
     minPrice: number,
-    maxPrice: number
+    maxPrice: number,
+    initialPrice?: number
   ) {
     this._baseToken = baseToken;
     this._preToken = preToken;
     this._minPrice = minPrice;
     this._maxPrice = maxPrice;
     this._priceCalculator = new PriceCalculator();
+
+    // Thiết lập giá khởi đầu
+    if (initialPrice && initialPrice >= minPrice && initialPrice <= maxPrice) {
+      this._currentSqrtPrice = Math.sqrt(initialPrice);
+      this._initialPriceSet = true;
+    } else {
+      // Mặc định sử dụng giá thấp nhất nếu không có giá khởi đầu được chỉ định
+      this._currentSqrtPrice = Math.sqrt(minPrice);
+      this._initialPriceSet = true;
+    }
   }
 
   get baseToken(): Token {
@@ -75,13 +88,13 @@ export class LiquidityPool {
     return this._realToken;
   }
 
+  /**
+   * Lấy giá hiện tại của pool
+   * Trong Uniswap V3, giá hiện tại không phụ thuộc trực tiếp vào tỷ lệ token trong pool
+   * mà phản ánh vùng thanh khoản đang hoạt động
+   */
   getCurrentPrice(): number {
-    return this._priceCalculator.calculateCurrentPrice(
-      this._baseReserve,
-      this._preTokenReserve,
-      this._minPrice,
-      this._maxPrice
-    );
+    return this._currentSqrtPrice * this._currentSqrtPrice;
   }
 
   /**
@@ -156,6 +169,14 @@ export class LiquidityPool {
 
     this._lpPositions.set(positionId, position);
 
+    // Trong Uniswap V3, thêm thanh khoản không làm thay đổi giá hiện tại
+    // Nếu chưa có giá khởi đầu và đây là LP đầu tiên, thiết lập giá khởi đầu
+    if (!this._initialPriceSet && this._lpPositions.size === 1) {
+      // Sử dụng giá thấp nhất của vùng thanh khoản đầu tiên
+      this._currentSqrtPrice = Math.sqrt(pa);
+      this._initialPriceSet = true;
+    }
+
     console.log(`
 LP Provider ${owner} added liquidity:
 - Base Token: ${baseAmount} ${this._baseToken.symbol}
@@ -222,6 +243,19 @@ LP Provider ${owner} added liquidity:
 
     const oldPrice = this.getCurrentPrice();
 
+    // Cập nhật giá hiện tại sau khi giao dịch
+    // Trong Uniswap V3, giá hiện tại thay đổi khi có giao dịch
+    // Tính toán giá mới dựa trên tỷ lệ reserves sau giao dịch
+    if (this._preTokenReserve > 0 && this._baseReserve > 0) {
+      const newPrice = this._priceCalculator.calculateCurrentPrice(
+        this._baseReserve,
+        this._preTokenReserve,
+        this._minPrice,
+        this._maxPrice
+      );
+      this._currentSqrtPrice = Math.sqrt(newPrice);
+    }
+
     console.log(`
 Trader ${trader} swapped base token for pre-token:
 - Input: ${baseAmount} ${this._baseToken.symbol}
@@ -286,6 +320,19 @@ Trader ${trader} swapped base token for pre-token:
     this._baseToken.transfer("POOL", trader, outputAmountAfterFee);
 
     const oldPrice = this.getCurrentPrice();
+
+    // Cập nhật giá hiện tại sau khi giao dịch
+    // Trong Uniswap V3, giá hiện tại thay đổi khi có giao dịch
+    // Tính toán giá mới dựa trên tỷ lệ reserves sau giao dịch
+    if (this._preTokenReserve > 0 && this._baseReserve > 0) {
+      const newPrice = this._priceCalculator.calculateCurrentPrice(
+        this._baseReserve,
+        this._preTokenReserve,
+        this._minPrice,
+        this._maxPrice
+      );
+      this._currentSqrtPrice = Math.sqrt(newPrice);
+    }
 
     console.log(`
 Trader ${trader} swapped pre-token for base token:

@@ -38,8 +38,8 @@ function initialize() {
   baseToken.mint("Trader1", 5000);
   baseToken.mint("Trader2", 8000);
 
-  // Create pool
-  poolId = amm.createPool(baseToken, preToken, 1.0, 5.0); // Price range: $1.0 - $5.0
+  // Create pool with initial price of 2.0
+  poolId = amm.createPool(baseToken, preToken, 1.0, 5.0, 2.0); // Price range: $1.0 - $5.0, Initial price: $2.0
 
   showMainMenu();
 }
