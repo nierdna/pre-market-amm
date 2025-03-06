@@ -39,7 +39,7 @@ function initialize() {
   baseToken.mint("Trader2", 8000);
 
   // Create pool with initial price of 2.0
-  poolId = amm.createPool(baseToken, preToken, 1.0, 5.0, 2.0); // Price range: $1.0 - $5.0, Initial price: $2.0
+  poolId = amm.createPool(baseToken, preToken, 1.0, 5.0, 1); // Price range: $1.0 - $5.0, Initial price: $2.0
 
   showMainMenu();
 }
@@ -124,7 +124,6 @@ function showPoolState() {
     `Pre-Token Reserve: ${pool.preTokenReserve.toFixed(6)} ${preToken.symbol}`
   );
   console.log(`Current Price: $${pool.getCurrentPrice().toFixed(6)}`);
-  console.log(`Price Range: $${pool.minPrice} - $${pool.maxPrice}`);
   console.log(`Settlement Phase: ${pool.isSettlementPhase ? "Yes" : "No"}`);
 
   if (pool.isSettlementPhase && pool.realToken) {

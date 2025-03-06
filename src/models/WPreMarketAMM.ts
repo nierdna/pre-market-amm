@@ -27,13 +27,7 @@ export class WPreMarketAMM {
       throw new Error(`Pool ${poolId} already exists`);
     }
 
-    const pool = new LiquidityPool(
-      baseToken,
-      preToken,
-      minPrice,
-      maxPrice,
-      initialPrice
-    );
+    const pool = new LiquidityPool(baseToken, preToken, initialPrice);
     this._liquidityPools.set(poolId, pool);
 
     const priceInfo = initialPrice

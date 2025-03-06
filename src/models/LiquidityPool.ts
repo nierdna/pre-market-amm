@@ -16,8 +16,6 @@ export class LiquidityPool {
   private _preToken: Token;
   private _baseReserve: number = 0;
   private _preTokenReserve: number = 0;
-  private _minPrice: number; // Pa
-  private _maxPrice: number; // Pb
   private _liquidity: number = 0;
   private _lpPositions: Map<string, LPPosition> = new Map();
   private _priceCalculator: PriceCalculator;
@@ -28,28 +26,12 @@ export class LiquidityPool {
   private _currentSqrtPrice: number; // Lưu trữ căn bậc hai của giá hiện tại
   private _initialPriceSet: boolean = false; // Đánh dấu đã thiết lập giá khởi đầu chưa
 
-  constructor(
-    baseToken: Token,
-    preToken: Token,
-    minPrice: number,
-    maxPrice: number,
-    initialPrice?: number
-  ) {
+  constructor(baseToken: Token, preToken: Token, initialPrice?: number) {
     this._baseToken = baseToken;
     this._preToken = preToken;
-    this._minPrice = minPrice;
-    this._maxPrice = maxPrice;
     this._priceCalculator = new PriceCalculator();
-
-    // Thiết lập giá khởi đầu
-    if (initialPrice && initialPrice >= minPrice && initialPrice <= maxPrice) {
-      this._currentSqrtPrice = Math.sqrt(initialPrice);
-      this._initialPriceSet = true;
-    } else {
-      // Mặc định sử dụng giá thấp nhất nếu không có giá khởi đầu được chỉ định
-      this._currentSqrtPrice = Math.sqrt(minPrice);
-      this._initialPriceSet = true;
-    }
+    this._currentSqrtPrice = initialPrice ? Math.sqrt(initialPrice) : 0;
+    this._initialPriceSet = initialPrice !== undefined;
   }
 
   get baseToken(): Token {
@@ -66,14 +48,6 @@ export class LiquidityPool {
 
   get preTokenReserve(): number {
     return this._preTokenReserve;
-  }
-
-  get minPrice(): number {
-    return this._minPrice;
-  }
-
-  get maxPrice(): number {
-    return this._maxPrice;
   }
 
   get liquidity(): number {
@@ -191,7 +165,8 @@ LP Provider ${owner} added liquidity:
   }
 
   /**
-   * Swap base token for pre-token
+   * Swap base token for pre-token (mua pre-token bằng base token)
+   * Cập nhật theo cơ chế Uniswap V3 - xử lý giao dịch qua nhiều khoảng giá
    * @param trader Trader address
    * @param baseAmount Amount of base token to swap
    * @returns Amount of pre-token received
@@ -217,59 +192,145 @@ LP Provider ${owner} added liquidity:
     const fee = baseAmount * this._feePercentage;
     const baseAmountAfterFee = baseAmount - fee;
 
-    // Calculate output amount
-    const outputAmount = this._priceCalculator.calculateSwapOutput(
-      baseAmountAfterFee,
-      this._baseReserve,
-      this._preTokenReserve,
-      this._minPrice,
-      this._maxPrice,
-      true // base to pre-token
-    );
-
-    if (outputAmount <= 0) {
-      throw new Error("Insufficient output amount");
-    }
-
     // Transfer base tokens from trader to pool
     this._baseToken.transfer(trader, "POOL", baseAmount);
 
-    // Update reserves
-    this._baseReserve += baseAmountAfterFee;
-    this._preTokenReserve -= outputAmount;
+    // Lấy giá hiện tại
+    const currentPrice = this.getCurrentPrice();
+    const currentSqrtPrice = Math.sqrt(currentPrice);
 
-    // Transfer pre-tokens from pool to trader
-    this._preToken.transfer("POOL", trader, outputAmount);
+    // Lấy danh sách các vị thế LP được sắp xếp theo giá tăng dần
+    const positions = Array.from(this._lpPositions.values()).sort(
+      (a, b) => a.lowerPriceBound - b.lowerPriceBound
+    );
 
-    const oldPrice = this.getCurrentPrice();
+    // Tìm vị thế LP đầu tiên có khoảng giá chứa giá hiện tại
+    let currentPositionIndex = positions.findIndex(
+      (pos) =>
+        pos.lowerPriceBound <= currentPrice &&
+        pos.upperPriceBound >= currentPrice
+    );
 
-    // Cập nhật giá hiện tại sau khi giao dịch
-    // Trong Uniswap V3, giá hiện tại thay đổi khi có giao dịch
-    // Tính toán giá mới dựa trên tỷ lệ reserves sau giao dịch
-    if (this._preTokenReserve > 0 && this._baseReserve > 0) {
-      const newPrice = this._priceCalculator.calculateCurrentPrice(
-        this._baseReserve,
-        this._preTokenReserve,
-        this._minPrice,
-        this._maxPrice
+    if (currentPositionIndex === -1) {
+      // Nếu không tìm thấy vị thế nào chứa giá hiện tại, tìm vị thế gần nhất có giá cao hơn
+      currentPositionIndex = positions.findIndex(
+        (pos) => pos.lowerPriceBound > currentPrice
       );
-      this._currentSqrtPrice = Math.sqrt(newPrice);
+
+      if (currentPositionIndex === -1) {
+        throw new Error("No liquidity available at current price or higher");
+      }
     }
+
+    let remainingBaseAmount = baseAmountAfterFee;
+    let totalPreTokenOutput = 0;
+    let newSqrtPrice = currentSqrtPrice;
+
+    console.log(`
+Swap details (Base token to Pre-token):
+- Starting price: ${currentPrice.toFixed(6)}
+- Base amount after fee: ${baseAmountAfterFee.toFixed(6)} ${
+      this._baseToken.symbol
+    }
+    `);
+
+    // Xử lý giao dịch qua các khoảng giá
+    while (remainingBaseAmount > 0 && currentPositionIndex < positions.length) {
+      const position = positions[currentPositionIndex];
+
+      // Tính toán thanh khoản hiệu quả cho vị thế này
+      const liquidity = position.liquidity;
+
+      // Xác định giới hạn giá của khoảng hiện tại
+      const lowerSqrtPrice = Math.sqrt(position.lowerPriceBound);
+      const upperSqrtPrice = Math.sqrt(position.upperPriceBound);
+
+      // Đảm bảo newSqrtPrice không thấp hơn lowerSqrtPrice
+      if (newSqrtPrice < lowerSqrtPrice) {
+        newSqrtPrice = lowerSqrtPrice;
+      }
+
+      // Tính toán giá mới dựa trên lượng base token còn lại và thanh khoản
+      // Công thức: √P_new = √P_current + Δy / L
+      const maxNewSqrtPrice = newSqrtPrice + remainingBaseAmount / liquidity;
+
+      // Giới hạn giá mới không vượt quá upperSqrtPrice
+      const effectiveNewSqrtPrice = Math.min(maxNewSqrtPrice, upperSqrtPrice);
+
+      // Tính lượng base token được sử dụng trong khoảng giá này
+      // Công thức: Δy = L * (√P_new - √P_current)
+      const baseAmountUsed = liquidity * (effectiveNewSqrtPrice - newSqrtPrice);
+
+      // Tính lượng pre-token nhận được trong khoảng giá này
+      // Công thức: Δx = L * (1/√P_current - 1/√P_new)
+      const preTokenReceived =
+        liquidity * (1 / newSqrtPrice - 1 / effectiveNewSqrtPrice);
+
+      // Cập nhật giá mới
+      newSqrtPrice = effectiveNewSqrtPrice;
+
+      // Cập nhật số lượng còn lại và tổng output
+      remainingBaseAmount -= baseAmountUsed;
+      totalPreTokenOutput += preTokenReceived;
+
+      console.log(`
+Processing price range [${position.lowerPriceBound.toFixed(
+        6
+      )}, ${position.upperPriceBound.toFixed(6)}]:
+- Liquidity: ${liquidity.toFixed(6)}
+- Base token used: ${baseAmountUsed.toFixed(6)} ${this._baseToken.symbol}
+- Pre-token received: ${preTokenReceived.toFixed(6)} ${this._preToken.symbol}
+- New price: ${(newSqrtPrice * newSqrtPrice).toFixed(6)}
+      `);
+
+      // Nếu chưa sử dụng hết khoảng giá hiện tại, dừng vòng lặp
+      if (effectiveNewSqrtPrice < upperSqrtPrice) {
+        break;
+      }
+
+      // Di chuyển đến khoảng giá tiếp theo
+      currentPositionIndex++;
+    }
+
+    // Nếu vẫn còn base token chưa sử dụng, trả lại cho trader
+    if (remainingBaseAmount > 0) {
+      this._baseToken.transfer("POOL", trader, remainingBaseAmount);
+      console.log(
+        `Returning unused base token: ${remainingBaseAmount.toFixed(6)} ${
+          this._baseToken.symbol
+        }`
+      );
+    }
+
+    // Cập nhật reserves
+    this._baseReserve += baseAmountAfterFee - remainingBaseAmount;
+    this._preTokenReserve -= totalPreTokenOutput;
+
+    // Cập nhật giá hiện tại
+    this._currentSqrtPrice = newSqrtPrice;
+
+    // Transfer pre-tokens từ pool đến trader
+    this._preToken.transfer("POOL", trader, totalPreTokenOutput);
+
+    const oldPrice = currentPrice;
+    const newPrice = newSqrtPrice * newSqrtPrice;
 
     console.log(`
 Trader ${trader} swapped base token for pre-token:
 - Input: ${baseAmount} ${this._baseToken.symbol}
 - Fee: ${fee.toFixed(6)} ${this._baseToken.symbol}
-- Output: ${outputAmount.toFixed(6)} ${this._preToken.symbol}
-- New Pool Price: ${this.getCurrentPrice().toFixed(6)}
-- Price Impact: ${((this.getCurrentPrice() / oldPrice - 1) * 100).toFixed(2)}%
+- Output: ${totalPreTokenOutput.toFixed(6)} ${this._preToken.symbol}
+- Starting Price: $${oldPrice.toFixed(6)}
+- New Pool Price: $${newPrice.toFixed(6)}
+- Price Impact: ${((newPrice / oldPrice - 1) * 100).toFixed(2)}%
     `);
 
-    return outputAmount;
+    return totalPreTokenOutput;
   }
 
   /**
-   * Swap pre-token for base token
+   * Swap pre-token for base token (bán pre-token để lấy base token)
+   * Cập nhật theo cơ chế Uniswap V3 - xử lý giao dịch qua nhiều khoảng giá
    * @param trader Trader address
    * @param preTokenAmount Amount of pre-token to swap
    * @returns Amount of base token received
@@ -291,59 +352,149 @@ Trader ${trader} swapped base token for pre-token:
       );
     }
 
-    // Calculate output amount
-    const outputAmount = this._priceCalculator.calculateSwapOutput(
-      preTokenAmount,
-      this._preTokenReserve,
-      this._baseReserve,
-      this._minPrice,
-      this._maxPrice,
-      false // pre-token to base
-    );
-
-    if (outputAmount <= 0) {
-      throw new Error("Insufficient output amount");
-    }
-
-    // Calculate fee
-    const fee = outputAmount * this._feePercentage;
-    const outputAmountAfterFee = outputAmount - fee;
-
     // Transfer pre-tokens from trader to pool
     this._preToken.transfer(trader, "POOL", preTokenAmount);
 
-    // Update reserves
-    this._preTokenReserve += preTokenAmount;
-    this._baseReserve -= outputAmount;
+    // Lấy giá hiện tại
+    const currentPrice = this.getCurrentPrice();
+    const currentSqrtPrice = Math.sqrt(currentPrice);
 
-    // Transfer base tokens from pool to trader
-    this._baseToken.transfer("POOL", trader, outputAmountAfterFee);
+    // Lấy danh sách các vị thế LP được sắp xếp theo giá giảm dần (ngược với swapBaseForPreToken)
+    const positions = Array.from(this._lpPositions.values()).sort(
+      (a, b) => b.upperPriceBound - a.upperPriceBound
+    );
 
-    const oldPrice = this.getCurrentPrice();
+    // Tìm vị thế LP đầu tiên có khoảng giá chứa giá hiện tại
+    let currentPositionIndex = positions.findIndex(
+      (pos) =>
+        pos.lowerPriceBound <= currentPrice &&
+        pos.upperPriceBound >= currentPrice
+    );
 
-    // Cập nhật giá hiện tại sau khi giao dịch
-    // Trong Uniswap V3, giá hiện tại thay đổi khi có giao dịch
-    // Tính toán giá mới dựa trên tỷ lệ reserves sau giao dịch
-    if (this._preTokenReserve > 0 && this._baseReserve > 0) {
-      const newPrice = this._priceCalculator.calculateCurrentPrice(
-        this._baseReserve,
-        this._preTokenReserve,
-        this._minPrice,
-        this._maxPrice
+    if (currentPositionIndex === -1) {
+      // Nếu không tìm thấy vị thế nào chứa giá hiện tại, tìm vị thế gần nhất có giá thấp hơn
+      currentPositionIndex = positions.findIndex(
+        (pos) => pos.upperPriceBound < currentPrice
       );
-      this._currentSqrtPrice = Math.sqrt(newPrice);
+
+      if (currentPositionIndex === -1) {
+        throw new Error("No liquidity available at current price or lower");
+      }
     }
+
+    let remainingPreTokenAmount = preTokenAmount;
+    let totalBaseTokenOutput = 0;
+    let newSqrtPrice = currentSqrtPrice;
+
+    console.log(`
+Swap details (Pre-token to Base token):
+- Starting price: ${currentPrice.toFixed(6)}
+- Pre-token amount: ${preTokenAmount.toFixed(6)} ${this._preToken.symbol}
+    `);
+
+    // Xử lý giao dịch qua các khoảng giá
+    while (
+      remainingPreTokenAmount > 0 &&
+      currentPositionIndex < positions.length
+    ) {
+      const position = positions[currentPositionIndex];
+
+      // Tính toán thanh khoản hiệu quả cho vị thế này
+      const liquidity = position.liquidity;
+
+      // Xác định giới hạn giá của khoảng hiện tại
+      const lowerSqrtPrice = Math.sqrt(position.lowerPriceBound);
+      const upperSqrtPrice = Math.sqrt(position.upperPriceBound);
+
+      // Đảm bảo newSqrtPrice không cao hơn upperSqrtPrice
+      if (newSqrtPrice > upperSqrtPrice) {
+        newSqrtPrice = upperSqrtPrice;
+      }
+
+      // Tính toán giá mới dựa trên lượng pre-token còn lại và thanh khoản
+      // Khi bán pre-token, giá giảm
+      // Công thức: Δx = L * (1/√P_new - 1/√P_current)
+      // Giải cho √P_new: √P_new = 1 / (Δx/L + 1/√P_current)
+      const divisor = remainingPreTokenAmount / liquidity + 1 / newSqrtPrice;
+      const minNewSqrtPrice = divisor > 0 ? 1 / divisor : 0;
+
+      // Giới hạn giá mới không thấp hơn lowerSqrtPrice
+      const effectiveNewSqrtPrice = Math.max(minNewSqrtPrice, lowerSqrtPrice);
+
+      // Tính lượng pre-token được sử dụng trong khoảng giá này
+      // Công thức: Δx = L * (1/√P_current - 1/√P_new)
+      const preTokenUsed =
+        liquidity * (1 / newSqrtPrice - 1 / effectiveNewSqrtPrice);
+
+      // Tính lượng base token nhận được trong khoảng giá này
+      // Công thức: Δy = L * (√P_current - √P_new)
+      const baseTokenReceived =
+        liquidity * (newSqrtPrice - effectiveNewSqrtPrice);
+
+      // Cập nhật giá mới
+      newSqrtPrice = effectiveNewSqrtPrice;
+
+      // Cập nhật số lượng còn lại và tổng output
+      remainingPreTokenAmount -= preTokenUsed;
+      totalBaseTokenOutput += baseTokenReceived;
+
+      console.log(`
+Processing price range [${position.lowerPriceBound.toFixed(
+        6
+      )}, ${position.upperPriceBound.toFixed(6)}]:
+- Liquidity: ${liquidity.toFixed(6)}
+- Pre-token used: ${preTokenUsed.toFixed(6)} ${this._preToken.symbol}
+- Base token received: ${baseTokenReceived.toFixed(6)} ${this._baseToken.symbol}
+- New price: ${(newSqrtPrice * newSqrtPrice).toFixed(6)}
+      `);
+
+      // Nếu chưa sử dụng hết khoảng giá hiện tại, dừng vòng lặp
+      if (effectiveNewSqrtPrice > lowerSqrtPrice) {
+        break;
+      }
+
+      // Di chuyển đến khoảng giá tiếp theo
+      currentPositionIndex++;
+    }
+
+    // Nếu vẫn còn pre-token chưa sử dụng, trả lại cho trader
+    if (remainingPreTokenAmount > 0) {
+      this._preToken.transfer("POOL", trader, remainingPreTokenAmount);
+      console.log(
+        `Returning unused pre-token: ${remainingPreTokenAmount.toFixed(6)} ${
+          this._preToken.symbol
+        }`
+      );
+    }
+
+    // Tính phí
+    const fee = totalBaseTokenOutput * this._feePercentage;
+    const baseTokenOutputAfterFee = totalBaseTokenOutput - fee;
+
+    // Cập nhật reserves
+    this._preTokenReserve += preTokenAmount - remainingPreTokenAmount;
+    this._baseReserve -= totalBaseTokenOutput;
+
+    // Cập nhật giá hiện tại
+    this._currentSqrtPrice = newSqrtPrice;
+
+    // Transfer base tokens từ pool đến trader
+    this._baseToken.transfer("POOL", trader, baseTokenOutputAfterFee);
+
+    const oldPrice = currentPrice;
+    const newPrice = newSqrtPrice * newSqrtPrice;
 
     console.log(`
 Trader ${trader} swapped pre-token for base token:
 - Input: ${preTokenAmount.toFixed(6)} ${this._preToken.symbol}
-- Output: ${outputAmountAfterFee.toFixed(6)} ${this._baseToken.symbol}
+- Output: ${baseTokenOutputAfterFee.toFixed(6)} ${this._baseToken.symbol}
 - Fee: ${fee.toFixed(6)} ${this._baseToken.symbol}
-- New Pool Price: ${this.getCurrentPrice().toFixed(6)}
-- Price Impact: ${((this.getCurrentPrice() / oldPrice - 1) * 100).toFixed(2)}%
+- Starting Price: $${oldPrice.toFixed(6)}
+- New Pool Price: $${newPrice.toFixed(6)}
+- Price Impact: ${((newPrice / oldPrice - 1) * 100).toFixed(2)}%
     `);
 
-    return outputAmountAfterFee;
+    return baseTokenOutputAfterFee;
   }
 
   /**
