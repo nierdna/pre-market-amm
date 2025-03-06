@@ -106,6 +106,17 @@ export class LiquidityPool {
       throw new Error("Base amount must be positive");
     }
 
+    // Check if the LP provider has enough base tokens
+    const lpBaseBalance = this._baseToken.balanceOf(owner);
+    if (lpBaseBalance < baseAmount * 2) {
+      // Need baseAmount for liquidity + baseAmount for collateral
+      throw new Error(
+        `Insufficient balance: need ${baseAmount * 2} ${
+          this._baseToken.symbol
+        } (${baseAmount} for liquidity + ${baseAmount} for collateral), but only have ${lpBaseBalance}`
+      );
+    }
+
     // Calculate pre-token amount based on the formula
     const preTokenAmount = this._priceCalculator.calculatePreTokenAmount(
       baseAmount,
@@ -119,6 +130,9 @@ export class LiquidityPool {
       pa,
       pb
     );
+
+    // Transfer base tokens from LP provider to pool (both for liquidity and collateral)
+    this._baseToken.transfer(owner, "POOL", baseAmount * 2);
 
     // Update reserves
     this._baseReserve += baseAmount;
@@ -170,6 +184,14 @@ LP Provider ${owner} added liquidity:
       throw new Error("Base amount must be positive");
     }
 
+    // Check if trader has enough base tokens
+    const traderBaseBalance = this._baseToken.balanceOf(trader);
+    if (traderBaseBalance < baseAmount) {
+      throw new Error(
+        `Insufficient balance: need ${baseAmount} ${this._baseToken.symbol}, but only have ${traderBaseBalance}`
+      );
+    }
+
     // Calculate fee
     const fee = baseAmount * this._feePercentage;
     const baseAmountAfterFee = baseAmount - fee;
@@ -188,11 +210,14 @@ LP Provider ${owner} added liquidity:
       throw new Error("Insufficient output amount");
     }
 
+    // Transfer base tokens from trader to pool
+    this._baseToken.transfer(trader, "POOL", baseAmount);
+
     // Update reserves
     this._baseReserve += baseAmountAfterFee;
     this._preTokenReserve -= outputAmount;
 
-    // Transfer tokens
+    // Transfer pre-tokens from pool to trader
     this._preToken.transfer("POOL", trader, outputAmount);
 
     const oldPrice = this.getCurrentPrice();
@@ -224,6 +249,14 @@ Trader ${trader} swapped base token for pre-token:
       throw new Error("Pre-token amount must be positive");
     }
 
+    // Check if trader has enough pre-tokens
+    const traderPreTokenBalance = this._preToken.balanceOf(trader);
+    if (traderPreTokenBalance < preTokenAmount) {
+      throw new Error(
+        `Insufficient balance: need ${preTokenAmount} ${this._preToken.symbol}, but only have ${traderPreTokenBalance}`
+      );
+    }
+
     // Calculate output amount
     const outputAmount = this._priceCalculator.calculateSwapOutput(
       preTokenAmount,
@@ -242,11 +275,14 @@ Trader ${trader} swapped base token for pre-token:
     const fee = outputAmount * this._feePercentage;
     const outputAmountAfterFee = outputAmount - fee;
 
+    // Transfer pre-tokens from trader to pool
+    this._preToken.transfer(trader, "POOL", preTokenAmount);
+
     // Update reserves
     this._preTokenReserve += preTokenAmount;
     this._baseReserve -= outputAmount;
 
-    // Transfer tokens
+    // Transfer base tokens from pool to trader
     this._baseToken.transfer("POOL", trader, outputAmountAfterFee);
 
     const oldPrice = this.getCurrentPrice();
