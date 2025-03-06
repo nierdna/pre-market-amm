@@ -119,10 +119,6 @@ function showPoolState() {
   console.log("Pool State:");
   console.log("-".repeat(80));
   console.log(`Pool ID: ${poolId}`);
-  console.log(`Base Token Reserve: ${pool.baseReserve} ${baseToken.symbol}`);
-  console.log(
-    `Pre-Token Reserve: ${pool.preTokenReserve.toFixed(6)} ${preToken.symbol}`
-  );
   console.log(`Current Price: $${pool.getCurrentPrice().toFixed(6)}`);
   console.log(`Settlement Phase: ${pool.isSettlementPhase ? "Yes" : "No"}`);
 
@@ -146,6 +142,16 @@ function showPoolState() {
       console.log(`  Collateral: ${pos.collateralAmount} ${baseToken.symbol}`);
       console.log(
         `  Initial Pre-Token: ${pos.initialPreTokenAmount.toFixed(6)} ${
+          preToken.symbol
+        }`
+      );
+      console.log(
+        `  Base Token Reserve: ${pos.baseTokenReserve.toFixed(6)} ${
+          baseToken.symbol
+        }`
+      );
+      console.log(
+        `  Pre-Token Reserve: ${pos.preTokenReserve.toFixed(6)} ${
           preToken.symbol
         }`
       );

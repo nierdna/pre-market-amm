@@ -9,6 +9,8 @@ export interface LPPosition {
   upperPriceBound: number; // Pb
   collateralAmount: number;
   initialPreTokenAmount: number;
+  baseTokenReserve: number; // Base token amount in this position
+  preTokenReserve: number; // Pre-token amount in this position
 }
 
 export class LiquidityPool {
@@ -127,6 +129,8 @@ export class LiquidityPool {
       upperPriceBound: pb,
       collateralAmount: baseAmount, // Equal collateral to base token
       initialPreTokenAmount: preTokenAmount,
+      baseTokenReserve: baseAmount, // Initial base token reserve for this position
+      preTokenReserve: preTokenAmount, // Initial pre-token reserve for this position
     };
 
     this._lpPositions.set(positionId, position);
@@ -246,11 +250,9 @@ Swap details (Base token to Pre-token):
       const effectiveNewSqrtPrice = Math.min(maxNewSqrtPrice, upperSqrtPrice);
 
       // Tính lượng base token được sử dụng trong khoảng giá này
-      // Công thức: Δy = L * (√P_new - √P_current)
       const baseAmountUsed = liquidity * (effectiveNewSqrtPrice - newSqrtPrice);
 
       // Tính lượng pre-token nhận được trong khoảng giá này
-      // Công thức: Δx = L * (1/√P_current - 1/√P_new)
       const preTokenReceived =
         liquidity * (1 / newSqrtPrice - 1 / effectiveNewSqrtPrice);
 
@@ -260,6 +262,13 @@ Swap details (Base token to Pre-token):
       // Cập nhật số lượng còn lại và tổng output
       remainingBaseAmount -= baseAmountUsed;
       totalPreTokenOutput += preTokenReceived;
+
+      // Cập nhật reserves của position
+      const positionInMap = this._lpPositions.get(position.id);
+      if (positionInMap) {
+        positionInMap.baseTokenReserve += baseAmountUsed;
+        positionInMap.preTokenReserve -= preTokenReceived;
+      }
 
       console.log(`
 Processing price range [${position.lowerPriceBound.toFixed(
@@ -406,12 +415,10 @@ Swap details (Pre-token to Base token):
       const effectiveNewSqrtPrice = Math.max(minNewSqrtPrice, lowerSqrtPrice);
 
       // Tính lượng pre-token được sử dụng trong khoảng giá này
-      // Công thức: Δx = L * (1/√P_current - 1/√P_new)
       const preTokenUsed =
         liquidity * (1 / newSqrtPrice - 1 / effectiveNewSqrtPrice);
 
       // Tính lượng base token nhận được trong khoảng giá này
-      // Công thức: Δy = L * (√P_current - √P_new)
       const baseTokenReceived =
         liquidity * (newSqrtPrice - effectiveNewSqrtPrice);
 
@@ -421,6 +428,13 @@ Swap details (Pre-token to Base token):
       // Cập nhật số lượng còn lại và tổng output
       remainingPreTokenAmount -= preTokenUsed;
       totalBaseTokenOutput += baseTokenReceived;
+
+      // Cập nhật reserves của position
+      const positionInMap = this._lpPositions.get(position.id);
+      if (positionInMap) {
+        positionInMap.preTokenReserve += preTokenUsed;
+        positionInMap.baseTokenReserve -= baseTokenReceived;
+      }
 
       console.log(`
 Processing price range [${position.lowerPriceBound.toFixed(
