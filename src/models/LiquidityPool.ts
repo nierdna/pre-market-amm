@@ -14,8 +14,6 @@ export interface LPPosition {
 export class LiquidityPool {
   private _baseToken: Token;
   private _preToken: Token;
-  private _baseReserve: number = 0;
-  private _preTokenReserve: number = 0;
   private _liquidity: number = 0;
   private _lpPositions: Map<string, LPPosition> = new Map();
   private _priceCalculator: PriceCalculator;
@@ -40,14 +38,6 @@ export class LiquidityPool {
 
   get preToken(): Token {
     return this._preToken;
-  }
-
-  get baseReserve(): number {
-    return this._baseReserve;
-  }
-
-  get preTokenReserve(): number {
-    return this._preTokenReserve;
   }
 
   get liquidity(): number {
@@ -121,9 +111,7 @@ export class LiquidityPool {
     // Transfer base tokens from LP provider to pool (both for liquidity and collateral)
     this._baseToken.transfer(owner, "POOL", baseAmount * 2);
 
-    // Update reserves
-    this._baseReserve += baseAmount;
-    this._preTokenReserve += preTokenAmount;
+    // Update total liquidity
     this._liquidity += liquidityAmount;
 
     // Mint pre-tokens (in a real implementation, this would be done by a separate contract)
@@ -302,10 +290,6 @@ Processing price range [${position.lowerPriceBound.toFixed(
       );
     }
 
-    // Cập nhật reserves
-    this._baseReserve += baseAmountAfterFee - remainingBaseAmount;
-    this._preTokenReserve -= totalPreTokenOutput;
-
     // Cập nhật giá hiện tại
     this._currentSqrtPrice = newSqrtPrice;
 
@@ -471,10 +455,6 @@ Processing price range [${position.lowerPriceBound.toFixed(
     const fee = totalBaseTokenOutput * this._feePercentage;
     const baseTokenOutputAfterFee = totalBaseTokenOutput - fee;
 
-    // Cập nhật reserves
-    this._preTokenReserve += preTokenAmount - remainingPreTokenAmount;
-    this._baseReserve -= totalBaseTokenOutput;
-
     // Cập nhật giá hiện tại
     this._currentSqrtPrice = newSqrtPrice;
 
@@ -526,13 +506,16 @@ Trader ${trader} swapped pre-token for base token:
     this._isSettlementPhase = true;
     this._realToken = realToken;
 
+    // Calculate total liquidity across all positions
+    const totalLiquidity = Array.from(this._lpPositions.values()).reduce(
+      (sum, pos) => sum + pos.liquidity,
+      0
+    );
+
     console.log(`
 Pool entered settlement phase:
 - Real Token: ${realToken.symbol}
-- Pre-Token Reserve: ${this._preTokenReserve.toFixed(6)} ${
-      this._preToken.symbol
-    }
-- Base Token Reserve: ${this._baseReserve.toFixed(6)} ${this._baseToken.symbol}
+- Total Liquidity: ${totalLiquidity.toFixed(6)}
     `);
   }
 }
